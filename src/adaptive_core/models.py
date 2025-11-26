@@ -81,3 +81,22 @@ class AdaptiveUpdateResult:
     state: AdaptiveState
     per_layer: Dict[str, LayerAdjustment] = field(default_factory=dict)
     processed_events: List[str] = field(default_factory=list)
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Dict, Any
+
+
+@dataclass
+class AdaptiveEvent:
+    """
+    Generic event coming from Sentinel, DQSN, ADN, Wallet Guardian, or QWG.
+    This allows Adaptive Core to learn attacker behavior over time.
+    """
+
+    layer: str
+    anomaly_type: str
+    severity: float
+    qri_delta: float = 0.0
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.utcnow)
