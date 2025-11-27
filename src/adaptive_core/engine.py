@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Dict, Iterable, List, Any
+from datetime import datetime
 
 from .models import (
     RiskEvent,
@@ -264,26 +265,6 @@ class AdaptiveEngine:
         Looks for:
             - frequent adjacent threat-type pairs
             - common (source_layer, threat_type) combinations
-
-        Returns:
-            {
-                "pair_correlations": [
-                    {
-                        "from_type": str,
-                        "to_type": str,
-                        "count": int,
-                    },
-                    ...
-                ],
-                "layer_threat_combos": [
-                    {
-                        "source_layer": str,
-                        "threat_type": str,
-                        "count": int,
-                    },
-                    ...
-                ],
-            }
         """
         packets = [
             p for p in self.threat_memory.list_packets()
@@ -335,6 +316,104 @@ class AdaptiveEngine:
         return {
             "pair_correlations": pair_correlations,
             "layer_threat_combos": layer_threat_combos,
+        }
+
+    def detect_threat_trends(
+        self,
+        min_severity: int = 0,
+        bucket: str = "hour",
+    ) -> Dict[str, Any]:
+        """
+        Detect simple time-based trends in threat activity.
+
+        bucket:
+            - "hour" → group by YYYY-MM-DD HH:00
+            - "day"  → group by YYYY-MM-DD
+
+        Returns:
+            {
+                "bucket": "hour" | "day",
+                "points": [
+                    {"bucket": str, "total": int, "high_severity": int},
+                    ...
+                ],
+                "trend_direction": "increasing" | "decreasing" | "flat" | "unknown",
+                "start_total": int,
+                "end_total": int,
+            }
+        """
+        packets = [
+            p for p in self.threat_memory.list_packets()
+            if p.severity >= min_severity
+        ]
+
+        if not packets:
+            return {
+                "bucket": bucket,
+                "points": [],
+                "trend_direction": "unknown",
+                "start_total": 0,
+                "end_total": 0,
+            }
+
+        bucket_counts: Dict[str, int] = {}
+        bucket_high: Dict[str, int] = {}
+
+        for p in packets:
+            # Parse timestamp; skip if invalid
+            try:
+                ts = datetime.fromisoformat(p.timestamp.replace("Z", ""))
+            except Exception:
+                continue
+
+            if bucket == "day":
+                key = ts.strftime("%Y-%m-%d")
+            else:
+                # default to hour
+                key = ts.strftime("%Y-%m-%d %H:00")
+
+            bucket_counts[key] = bucket_counts.get(key, 0) + 1
+            if p.severity >= 8:
+                bucket_high[key] = bucket_high.get(key, 0) + 1
+
+        if not bucket_counts:
+            return {
+                "bucket": bucket,
+                "points": [],
+                "trend_direction": "unknown",
+                "start_total": 0,
+                "end_total": 0,
+            }
+
+        # sort buckets chronologically (string sort works with this format)
+        keys_sorted = sorted(bucket_counts.keys())
+        points = [
+            {
+                "bucket": k,
+                "total": bucket_counts[k],
+                "high_severity": bucket_high.get(k, 0),
+            }
+            for k in keys_sorted
+        ]
+
+        start_total = bucket_counts[keys_sorted[0]]
+        end_total = bucket_counts[keys_sorted[-1]]
+
+        if len(keys_sorted) < 2:
+            trend_direction = "unknown"
+        elif end_total > start_total:
+            trend_direction = "increasing"
+        elif end_total < start_total:
+            trend_direction = "decreasing"
+        else:
+            trend_direction = "flat"
+
+        return {
+            "bucket": bucket,
+            "points": points,
+            "trend_direction": trend_direction,
+            "start_total": start_total,
+            "end_total": end_total,
         }
 
     def threat_insights(self, min_severity: int = 0) -> str:
