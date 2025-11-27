@@ -185,14 +185,6 @@ class AdaptiveEngine:
     ) -> Dict[str, Any]:
         """
         Detect simple threat patterns in recent history.
-
-        Returns a dictionary with:
-            - window_size: number of recent packets inspected
-            - total_considered: total packets used after filtering
-            - rising_patterns: list of dicts describing threat types that
-              appear more frequently in the recent window than overall
-            - hotspot_layers: list of dicts with layers that appear most often
-              in the recent window
         """
         packets = [
             p for p in self.threat_memory.list_packets()
@@ -329,18 +321,6 @@ class AdaptiveEngine:
         bucket:
             - "hour" → group by YYYY-MM-DD HH:00
             - "day"  → group by YYYY-MM-DD
-
-        Returns:
-            {
-                "bucket": "hour" | "day",
-                "points": [
-                    {"bucket": str, "total": int, "high_severity": int},
-                    ...
-                ],
-                "trend_direction": "increasing" | "decreasing" | "flat" | "unknown",
-                "start_total": int,
-                "end_total": int,
-            }
         """
         packets = [
             p for p in self.threat_memory.list_packets()
@@ -360,7 +340,6 @@ class AdaptiveEngine:
         bucket_high: Dict[str, int] = {}
 
         for p in packets:
-            # Parse timestamp; skip if invalid
             try:
                 ts = datetime.fromisoformat(p.timestamp.replace("Z", ""))
             except Exception:
@@ -369,7 +348,6 @@ class AdaptiveEngine:
             if bucket == "day":
                 key = ts.strftime("%Y-%m-%d")
             else:
-                # default to hour
                 key = ts.strftime("%Y-%m-%d %H:00")
 
             bucket_counts[key] = bucket_counts.get(key, 0) + 1
@@ -385,7 +363,6 @@ class AdaptiveEngine:
                 "end_total": 0,
             }
 
-        # sort buckets chronologically (string sort works with this format)
         keys_sorted = sorted(bucket_counts.keys())
         points = [
             {
@@ -414,6 +391,142 @@ class AdaptiveEngine:
             "trend_direction": trend_direction,
             "start_total": start_total,
             "end_total": end_total,
+        }
+
+    def generate_immune_report(
+        self,
+        min_severity: int = 0,
+        pattern_window: int = 20,
+        trend_bucket: str = "hour",
+        last_n: int = 5,
+    ) -> Dict[str, Any]:
+        """
+        High-level immune system report combining all analysis components.
+
+        Returns a dictionary with:
+            - summary
+            - analysis
+            - patterns
+            - correlations
+            - trends
+            - text: multi-line human-readable report
+        """
+        summary = self.summarize_threats(min_severity=min_severity)
+        analysis = self.analyze_threats(
+            min_severity=min_severity,
+            last_n=last_n,
+        )
+        patterns = self.detect_threat_patterns(
+            min_severity=min_severity,
+            window=pattern_window,
+        )
+        correlations = self.detect_threat_correlations(
+            min_severity=min_severity,
+        )
+        trends = self.detect_threat_trends(
+            min_severity=min_severity,
+            bucket=trend_bucket,
+        )
+
+        # Build human-readable text
+        lines: List[str] = []
+        lines.append("=== DigiByte Quantum Adaptive Core — Immune Report ===")
+        lines.append(f"Min severity filter: {min_severity}")
+        lines.append("")
+
+        # Summary section
+        lines.append(">> Threat Summary:")
+        if not summary:
+            lines.append("  No threats recorded yet.")
+        else:
+            for t, count in summary.items():
+                label = t.replace("_", " ").title()
+                lines.append(f"  - {label}: {count}")
+        lines.append("")
+
+        # Analysis section
+        lines.append(">> Analysis:")
+        lines.append(f"  Total threats: {analysis['total_count']}")
+        lines.append(f"  Average severity: {analysis['average_severity']:.2f}")
+        lines.append(f"  Max severity: {analysis['max_severity']}")
+        lines.append(f"  Most common type: {analysis['most_common_type']}")
+        lines.append("")
+
+        # Patterns
+        lines.append(">> Rising Patterns (recent vs overall):")
+        if not patterns["rising_patterns"]:
+            lines.append("  None detected.")
+        else:
+            for p in patterns["rising_patterns"]:
+                label = p["threat_type"].replace("_", " ").title()
+                lines.append(
+                    f"  - {label}: recent {p['recent_count']} "
+                    f"(freq {p['recent_frequency']:.2f}) "
+                    f"vs overall {p['total_count']} "
+                    f"(freq {p['overall_frequency']:.2f})"
+                )
+        lines.append("")
+
+        # Hotspot layers
+        lines.append(">> Hotspot Layers (most active in recent window):")
+        if not patterns["hotspot_layers"]:
+            lines.append("  None detected.")
+        else:
+            for h in patterns["hotspot_layers"]:
+                lines.append(
+                    f"  - {h['source_layer']}: {h['recent_count']} recent events"
+                )
+        lines.append("")
+
+        # Correlations
+        lines.append(">> Correlations:")
+        if not correlations["pair_correlations"]:
+            lines.append("  No adjacent threat-type correlations detected.")
+        else:
+            top_pairs = correlations["pair_correlations"][:5]
+            lines.append("  Most common threat-type pairs:")
+            for pair in top_pairs:
+                a = pair["from_type"].replace("_", " ").title()
+                b = pair["to_type"].replace("_", " ").title()
+                lines.append(f"    - {a} → {b}: {pair['count']} times")
+
+        if not correlations["layer_threat_combos"]:
+            lines.append("  No strong (layer, threat) combinations.")
+        else:
+            top_combos = correlations["layer_threat_combos"][:5]
+            lines.append("  Most active (layer, threat) combinations:")
+            for c in top_combos:
+                tlabel = c["threat_type"].replace("_", " ").title()
+                lines.append(
+                    f"    - {c['source_layer']} / {tlabel}: {c['count']} events"
+                )
+        lines.append("")
+
+        # Trends
+        lines.append(">> Time Trends:")
+        lines.append(
+            f"  Trend direction ({trends['bucket']}): {trends['trend_direction']}"
+        )
+        lines.append(
+            f"  Start total: {trends['start_total']}, "
+            f"End total: {trends['end_total']}"
+        )
+        if trends["points"]:
+            lines.append("  Points:")
+            for p in trends["points"]:
+                lines.append(
+                    f"    - {p['bucket']}: total={p['total']}, "
+                    f"high_severity={p['high_severity']}"
+                )
+        lines.append("")
+
+        return {
+            "summary": summary,
+            "analysis": analysis,
+            "patterns": patterns,
+            "correlations": correlations,
+            "trends": trends,
+            "text": "\n".join(lines),
         }
 
     def threat_insights(self, min_severity: int = 0) -> str:
