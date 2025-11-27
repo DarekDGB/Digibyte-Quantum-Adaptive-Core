@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Any
+from typing import Dict, Iterable, List, Any, Optional
 from datetime import datetime
 
 from .models import (
@@ -54,6 +54,10 @@ class AdaptiveEngine:
         self.threat_memory = ThreatMemory()
         self.threat_memory.load()
 
+        # Last update metadata (UTC ISO strings, or None if never updated).
+        self.last_threat_received: Optional[str] = None
+        self.last_learning_update: Optional[str] = None
+
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
@@ -85,6 +89,10 @@ class AdaptiveEngine:
 
         self._clamp_state()
 
+        # if we processed any feedback, record learning timestamp
+        if events_list:
+            self.last_learning_update = datetime.utcnow().isoformat() + "Z"
+
         return AdaptiveUpdateResult(
             state=self.state,
             per_layer=per_layer,
@@ -98,6 +106,8 @@ class AdaptiveEngine:
         """
         self.threat_memory.add_packet(packet)
         self.threat_memory.save()
+        # record last time any threat was seen
+        self.last_threat_received = datetime.utcnow().isoformat() + "Z"
 
     def summarize_threats(self, min_severity: int = 0) -> Dict[str, int]:
         """
@@ -184,7 +194,7 @@ class AdaptiveEngine:
         window: int = 20,
     ) -> Dict[str, Any]:
         """
-            Detect simple threat patterns in recent history.
+        Detect simple threat patterns in recent history.
         """
         packets = [
             p for p in self.threat_memory.list_packets()
@@ -535,6 +545,15 @@ class AdaptiveEngine:
             lines.append(f"{label}: {count}")
 
         return "\n".join(lines)
+
+    def get_last_update_metadata(self) -> Dict[str, Optional[str]]:
+        """
+        Return timestamps (UTC ISO strings) of last threat and last learning.
+        """
+        return {
+            "last_threat_received": self.last_threat_received,
+            "last_learning_update": self.last_learning_update,
+        }
 
     # ------------------------------------------------------------------ #
     # Internal helpers
