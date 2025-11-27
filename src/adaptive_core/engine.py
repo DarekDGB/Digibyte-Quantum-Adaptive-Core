@@ -72,13 +72,7 @@ class AdaptiveEngine:
         """
         Apply reinforcement-style updates based on feedback for a batch
         of RiskEvents.
-
-        Returns an AdaptiveUpdateResult with:
-          - updated global AdaptiveState
-          - per-layer adjustment summary
-          - list of processed event IDs
         """
-        # Materialise iterable once so we can loop and also collect IDs safely.
         events_list: List[RiskEvent] = list(events)
 
         per_layer: Dict[str, LayerAdjustment] = {
@@ -88,24 +82,26 @@ class AdaptiveEngine:
         for event in events_list:
             self._apply_single_event(event, per_layer)
 
-        # Clamp values to safe ranges.
         self._clamp_state()
 
-        result = AdaptiveUpdateResult(
+        return AdaptiveUpdateResult(
             state=self.state,
             per_layer=per_layer,
             processed_events=[e.event_id for e in events_list],
         )
-        return result
+
+    def receive_threat_packet(self, packet: ThreatPacket) -> None:
+        """
+        Receive a ThreatPacket from any shield layer and persist it
+        into ThreatMemory.
+        """
+        self.threat_memory.add_packet(packet)
+        self.threat_memory.save()
 
     def summarize_threats(self, min_severity: int = 0) -> Dict[str, int]:
         """
         Simple analysis of stored ThreatPackets.
-
-        Returns a mapping:
-            threat_type -> count
-
-        You can filter out low-severity noise by setting min_severity.
+        Returns: threat_type -> count
         """
         packets = self.threat_memory.list_packets()
         summary: Dict[str, int] = {}
@@ -117,16 +113,26 @@ class AdaptiveEngine:
 
         return summary
 
-    def receive_threat_packet(self, packet: ThreatPacket) -> None:
+    def threat_insights(self, min_severity: int = 0) -> str:
         """
-        Receive a ThreatPacket from any shield layer and persist it
-        into ThreatMemory.
+        Produce a human-readable summary of threat patterns stored in memory.
+        Example output:
+            High severity reorg patterns: 4
+            Wallet anomalies: 2
+            PQC entropy warnings: 1
+        """
+        summary = self.summarize_threats(min_severity=min_severity)
 
-        Later, this stored history will be used for deeper analysis
-        and pattern-based adaptation.
-        """
-        self.threat_memory.add_packet(packet)
-        self.threat_memory.save()
+        if not summary:
+            return "No threats recorded yet."
+
+        lines = []
+        for threat_type, count in summary.items():
+            # Format the type nicely for humans
+            label = threat_type.replace("_", " ").title()
+            lines.append(f"{label}: {count}")
+
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------ #
     # Internal helpers
@@ -140,46 +146,34 @@ class AdaptiveEngine:
         layer = event.layer
 
         if layer not in self.state.layer_weights:
-            # New layer encountered during learning – start neutral.
             self.state.layer_weights[layer] = 1.0
             per_layer[layer] = LayerAdjustment()
 
         adj = per_layer[layer]
 
         if event.feedback == FeedbackType.TRUE_POSITIVE:
-            # The reporting layer was correct → trust it a bit more,
-            # and make the system slightly stricter.
             self.state.layer_weights[layer] += 0.05
             self.state.global_threshold += 0.01
             adj.weight_delta += 0.05
             adj.threshold_shift += 0.01
 
         elif event.feedback == FeedbackType.FALSE_POSITIVE:
-            # The reporting layer overreacted → trust it a bit less,
-            # and relax the global threshold slightly.
             self.state.layer_weights[layer] -= 0.05
             self.state.global_threshold -= 0.01
             adj.weight_delta -= 0.05
             adj.threshold_shift -= 0.01
 
         elif event.feedback == FeedbackType.MISSED_ATTACK:
-            # A real attack slipped through → *all* layers need to become
-            # more sensitive, and the global threshold tightens more.
             for l in self.state.layer_weights:
                 self.state.layer_weights[l] += 0.02
                 per_layer.setdefault(l, LayerAdjustment()).weight_delta += 0.02
             self.state.global_threshold += 0.02
 
-        # UNKNOWN feedback → no learning
-
     def _clamp_state(self) -> None:
         """
-        Keep the adaptive parameters within safe, bounded ranges to avoid
-        runaway behaviour or oscillations.
+        Keep weights and thresholds within safe bounded ranges.
         """
-        # keep weights within [0.1, 5.0]
         for layer, w in list(self.state.layer_weights.items()):
             self.state.layer_weights[layer] = max(0.1, min(5.0, w))
 
-        # keep threshold within [0.1, 0.9]
         self.state.global_threshold = max(0.1, min(0.9, self.state.global_threshold))
