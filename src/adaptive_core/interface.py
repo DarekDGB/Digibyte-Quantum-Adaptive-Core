@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Iterable
 
 from .engine import AdaptiveEngine
 from .threat_packet import ThreatPacket
+from .models import RiskEvent, AdaptiveState, AdaptiveUpdateResult
 
 
 class AdaptiveCoreInterface:
@@ -18,8 +19,9 @@ class AdaptiveCoreInterface:
 
     Responsibilities:
       - Accept ThreatPacket objects from any layer
+      - Accept feedback events (TRUE_POSITIVE, FALSE_POSITIVE, MISSED_ATTACK)
       - Forward them into the AdaptiveEngine
-      - Expose a unified Immune Report for consumers
+      - Expose a unified Immune Report and adaptive state for consumers
     """
 
     def __init__(self, engine: Optional[AdaptiveEngine] = None) -> None:
@@ -48,6 +50,23 @@ class AdaptiveCoreInterface:
             )
         """
         self.engine.receive_threat_packet(packet)
+
+    def submit_feedback_events(
+        self,
+        events: Iterable[RiskEvent],
+    ) -> AdaptiveUpdateResult:
+        """
+        Submit labelled feedback events to the adaptive core so it can learn.
+
+        Each RiskEvent carries:
+            - which layer reported the risk
+            - which threat / context it refers to
+            - feedback type (TRUE_POSITIVE, FALSE_POSITIVE, MISSED_ATTACK)
+
+        The engine will update layer weights and global thresholds and
+        return an AdaptiveUpdateResult summary.
+        """
+        return self.engine.apply_learning(events)
 
     # ------------------------------------------------------------------ #
     # Read-only intelligence API
@@ -98,3 +117,10 @@ class AdaptiveCoreInterface:
         Shortcut wrapper for the simpler threat_insights view.
         """
         return self.engine.threat_insights(min_severity=min_severity)
+
+    def get_adaptive_state(self) -> AdaptiveState:
+        """
+        Return the current adaptive state (layer weights + global threshold).
+        Useful for debugging, dashboards or external monitoring.
+        """
+        return self.engine.state
