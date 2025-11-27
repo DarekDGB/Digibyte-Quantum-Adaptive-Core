@@ -98,6 +98,25 @@ class AdaptiveEngine:
         )
         return result
 
+    def summarize_threats(self, min_severity: int = 0) -> Dict[str, int]:
+        """
+        Simple analysis of stored ThreatPackets.
+
+        Returns a mapping:
+            threat_type -> count
+
+        You can filter out low-severity noise by setting min_severity.
+        """
+        packets = self.threat_memory.list_packets()
+        summary: Dict[str, int] = {}
+
+        for p in packets:
+            if p.severity < min_severity:
+                continue
+            summary[p.threat_type] = summary.get(p.threat_type, 0) + 1
+
+        return summary
+
     def receive_threat_packet(self, packet: ThreatPacket) -> None:
         """
         Receive a ThreatPacket from any shield layer and persist it
