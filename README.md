@@ -1,14 +1,49 @@
-# Digibyte-Quantum-Adaptive-Core
-Digibyte-Quantum-Adaptive-Core — the self-learning layer of the DigiByte Quantum Shield. Uses anomaly logs, attacker fingerprints and reinforcement updates to evolve thresholds, reweight QRI scoring and strengthen all 5 defense layers. A dynamic digital immune system for blockchain security.
+# DigiByte Quantum Adaptive Core v2 — Technical Documentation  
+### Self-Learning Digital Immune System (Shared Layer for All 5 Shield Layers)
 
-## Status
+## 1. Purpose  
+Adaptive Core v2 provides:  
+- threat memory  
+- pattern analysis  
+- trend detection  
+- reinforcement learning  
+- adaptive thresholds  
+- immune reporting  
+- heartbeat metadata  
 
-This repository contains the v0.1 prototype of the DigiByte Quantum
-Adaptive Core. It provides:
+## 2. Architecture  
+```
+ThreatPackets → ThreatMemory → Analysis → Learning → State Update → Immune Report
+```
 
-- event logging via `InMemoryAdaptiveStore`
-- reinforcement-style learning via `AdaptiveEngine`
-- pytest-based tests in `tests/`
+## 3. Core Components  
+- `AdaptiveEngine` – reinforcement engine  
+- `ThreatMemory` – persistent threat store  
+- `ThreatPacket` – unified threat structure  
+- `AdaptiveCoreInterface` – external API  
 
-Future versions can plug this directly into Sentinel AI, DQSN, ADN,
-Wallet Guardian and Quantum Wallet Guard as a shared adaptive layer.
+## 4. Submit Threats  
+```python
+interface.submit_threat_packet(packet)
+```
+
+## 5. Submit Feedback  
+```python
+interface.submit_feedback_events([RiskEvent(...)])
+```
+
+## 6. Generate Immune Report  
+```python
+report = interface.get_immune_report_text()
+```
+
+## 7. Metadata  
+```python
+interface.get_last_update_metadata()
+```
+
+## 8. Safety  
+- bounded weights  
+- bounded thresholds  
+- safe timestamps  
+- durable threat storage
