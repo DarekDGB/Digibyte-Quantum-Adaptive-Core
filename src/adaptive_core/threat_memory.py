@@ -1,70 +1,114 @@
-# adaptive_core/threat_memory.py
+# src/adaptive_core/threat_memory.py
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 
 from .threat_packet import ThreatPacket
 
 
 class ThreatMemory:
     """
-    Basic memory container for ThreatPacket objects.
+    Lightweight persistent store for ThreatPacket objects.
 
-    This is where the Adaptive Core can store, reload and analyse
-    past threats reported by all 5 shield layers.
+    Design goals:
+      - very small footprint (default cap: 10_000 packets)
+      - simple JSON representation
+      - safe to load/save repeatedly
+      - pruning of oldest entries to avoid unbounded growth
     """
 
-    def __init__(self, storage_path: Optional[Path] = None) -> None:
-        # Default location: ./data/threat_memory.json (created if missing)
-        if storage_path is None:
-            self.storage_path = Path("data") / "threat_memory.json"
-        else:
-            self.storage_path = storage_path
+    def __init__(
+        self,
+        path: Optional[Path] = None,
+        max_packets: int = 10_000,
+    ) -> None:
+        # Where the JSON file is stored on disk.
+        self.path: Path = path or Path("threat_memory.json")
 
+        # In-memory list of ThreatPacket objects.
         self._packets: List[ThreatPacket] = []
 
-    # ---------- core operations ----------
+        # Hard cap on how many packets we keep.
+        # With compact JSON this keeps us safely in the sub-10 MB range
+        # even with thousands of stored entries.
+        self.max_packets: int = max_packets
+
+    # ------------------------------------------------------------------ #
+    # Basic operations
+    # ------------------------------------------------------------------ #
 
     def add_packet(self, packet: ThreatPacket) -> None:
-        """Add a new ThreatPacket to memory."""
+        """
+        Append a new ThreatPacket and prune oldest entries if we exceed
+        max_packets.
+        """
         self._packets.append(packet)
+        self._enforce_limit()
 
     def list_packets(self) -> List[ThreatPacket]:
-        """Return all stored packets."""
+        """
+        Return a shallow copy of all stored packets.
+        """
         return list(self._packets)
 
-    def clear(self) -> None:
-        """Clear in-memory packets (does not touch disk)."""
-        self._packets.clear()
-
-    # ---------- persistence ----------
-
-    def save(self) -> None:
-        """
-        Save current packets to disk as JSON.
-        Creates parent directory if it does not exist.
-        """
-        if not self.storage_path.parent.exists():
-            self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-
-        data: List[Dict[str, Any]] = [p.to_dict() for p in self._packets]
-
-        with self.storage_path.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+    # ------------------------------------------------------------------ #
+    # Persistence
+    # ------------------------------------------------------------------ #
 
     def load(self) -> None:
         """
-        Load packets from disk into memory.
-        If file does not exist, memory stays empty.
+        Load packets from disk if the file exists.
+
+        Any excess entries beyond max_packets are pruned from the front
+        (oldest first) to keep the memory bounded.
         """
-        if not self.storage_path.exists():
+        if not self.path.exists():
             self._packets = []
             return
 
-        with self.storage_path.open("r", encoding="utf-8") as f:
-            raw: List[Dict[str, Any]] = json.load(f)
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:
+            # On any parse error, start from a clean state.
+            self._packets = []
+            return
 
-        self._packets = [ThreatPacket.from_dict(item) for item in raw]
+        packets: List[ThreatPacket] = []
+        for item in raw:
+            try:
+                packets.append(ThreatPacket.from_dict(item))
+            except Exception:
+                # Skip malformed entries rather than failing hard.
+                continue
+
+        self._packets = packets
+        self._enforce_limit()
+
+    def save(self) -> None:
+        """
+        Persist the current packet list to disk as JSON.
+        """
+        data = [p.to_dict() for p in self._packets]
+        self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    # ------------------------------------------------------------------ #
+    # Internal helpers
+    # ------------------------------------------------------------------ #
+
+    def _enforce_limit(self) -> None:
+        """
+        Ensure the in-memory packet list does not exceed max_packets.
+        Oldest entries are discarded first (FIFO pruning).
+        """
+        if self.max_packets <= 0:
+            # Treat non-positive caps as "no storage".
+            self._packets = []
+            return
+
+        excess = len(self._packets) - self.max_packets
+        if excess > 0:
+            # Drop the oldest 'excess' packets from the front.
+            self._packets = self._packets[excess:]
