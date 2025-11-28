@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional, Iterable
+from typing import Any, Optional, Iterable, Dict, List
 
 from .engine import AdaptiveEngine
 from .threat_packet import ThreatPacket
@@ -20,16 +20,21 @@ class AdaptiveCoreInterface:
     Responsibilities:
       - Accept ThreatPacket objects from any layer
       - Accept feedback events (TRUE_POSITIVE, FALSE_POSITIVE, MISSED_ATTACK)
-      - Forward them into the AdaptiveEngine
+      - Accept wallet / app events from bridges (e.g. QWG via emit_adaptive_event)
+      - Forward them into the AdaptiveEngine where appropriate
       - Expose a unified Immune Report and adaptive state for consumers
     """
 
     def __init__(self, engine: Optional[AdaptiveEngine] = None) -> None:
         # If no engine is provided, create a default one.
-        self.engine = engine or AdaptiveEngine()
+        self.engine: AdaptiveEngine = engine or AdaptiveEngine()
+
+        # Raw adaptive events received from external layers (QWG, Guardian, etc.)
+        # These are stored for diagnostics / future learning hooks.
+        self.received_events: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------ #
-    # Inbound API from shield layers
+    # Inbound API from shield layers (ThreatPackets + feedback)
     # ------------------------------------------------------------------ #
 
     def submit_threat_packet(self, packet: ThreatPacket) -> None:
@@ -46,6 +51,60 @@ class AdaptiveCoreInterface:
         Submit labelled feedback events to the adaptive core so it can learn.
         """
         return self.engine.apply_learning(events)
+
+    # ------------------------------------------------------------------ #
+    # Inbound API from wallet bridges (QWG → Adaptive Core)
+    # ------------------------------------------------------------------ #
+
+    def handle_event(self, event: Dict[str, Any]) -> None:
+        """
+        Entry point used by external bridges, e.g. QWG's emit_adaptive_event.
+
+        Expected minimal schema:
+          - event_id:    str
+          - action:      str  (e.g. "block", "delay", "warn", ...)
+          - severity:    float (0.0 – 1.0)
+          - fingerprint: str  (wallet / device fingerprint)
+
+        Any extra keys (user_id, extra, source, ...) are accepted
+        and preserved. On any error this function quietly returns –
+        Adaptive Core must never break wallet logic upstream.
+        """
+        if not isinstance(event, dict):
+            return
+
+        try:
+            # Normalise core fields
+            event_id = str(event.get("event_id", "unknown"))
+            action = str(event.get("action", "unknown"))
+            severity = float(event.get("severity", 0.0))
+
+            normalized: Dict[str, Any] = dict(event)
+            normalized["event_id"] = event_id
+            normalized["action"] = action
+            normalized["severity"] = severity
+
+            # Tag the source if not already present
+            normalized.setdefault("source", "external")
+
+            self.received_events.append(normalized)
+
+            # NOTE (v0.1):
+            #   We are not yet turning these into RiskEvents / learning signals.
+            #   Future versions can:
+            #     - derive feedback from wallet decisions
+            #     - call engine.record_events(...) or apply_learning(...)
+        except Exception:
+            # Safety first — never blow up the caller.
+            return
+
+    def list_events(self) -> List[Dict[str, Any]]:
+        """
+        Return a shallow copy of all received wallet/app events.
+
+        Useful for diagnostics, tests or higher-level dashboards.
+        """
+        return list(self.received_events)
 
     # ------------------------------------------------------------------ #
     # Read-only intelligence API
