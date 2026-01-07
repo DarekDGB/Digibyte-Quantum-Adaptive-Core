@@ -19,9 +19,12 @@ def test_detect_threat_trends_counts_invalid_timestamps():
         source_layer="sentinel_ai_v2",
         threat_type="TEST_BAD",
         severity=5,
-        description="bad packet",
-        timestamp="not-a-timestamp",
+        description="bad packet (corrupted timestamp)",
+        timestamp="2026-01-01T13:00:00Z",
     )
+
+    # Simulate legacy/corrupted data already present in memory:
+    bad.timestamp = "not-a-timestamp"
 
     engine.receive_threat_packet(good)
     engine.receive_threat_packet(bad)
